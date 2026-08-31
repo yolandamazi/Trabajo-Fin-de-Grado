@@ -1,4 +1,4 @@
-# Sistema de Sincronización y Procesamiento Biomédico (TFG)
+# Desarrollo de una Aplicación para la Integración y Sincronización Temporal de Señales Biomédicas Multimodales
 
 Aplicación de escritorio para la lectura, filtrado, sincronización temporal y exportación unificada a formato EDF/EDF+ de señales electromiográficas (EMG) y electrocardiográficas (ECG).
 
