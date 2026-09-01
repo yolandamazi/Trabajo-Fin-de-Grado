@@ -54,24 +54,24 @@ class MainWindow(QMainWindow):
         sync_layout = QHBoxLayout()
 
         self.btn_auto_sync = QPushButton("Sincronización Automática (Cross-Corr)")
-        self.btn_auto_sync.clicked.connect(self.auto_sync)
+        self.btn_auto_sync.clicked.connect(self.sync_auto)
         sync_layout.addWidget(self.btn_auto_sync)
 
         sync_layout.addWidget(QLabel("Offset Manual (seg):"))
         
         # Control de precisión fina
         self.spin_offset = QDoubleSpinBox()
-        self.spin_offset.setRange(-10.0, 10.0)
-        self.spin_offset.setSingleStep(0.001)
+        self.spin_offset.setRange(-10000.0, 10000.0)
+        self.spin_offset.setSingleStep(0.1)
         self.spin_offset.setDecimals(3)
-        self.spin_offset.valueChanged.connect(self.on_spin_offset_changed)
+        self.spin_offset.valueChanged.connect(self.on_spin_changed)
         sync_layout.addWidget(self.spin_offset)
 
         # Deslizador rápido
         self.slider_offset = QSlider(Qt.Horizontal)
         self.slider_offset.setRange(-5000, 5000) # -5.0s a +5.0s en ms
         self.slider_offset.setValue(0)
-        self.slider_offset.valueChanged.connect(self.on_slider_offset_changed)
+        self.slider_offset.valueChanged.connect(self.on_slider_changed)
         sync_layout.addWidget(self.slider_offset)
 
         sync_group.setLayout(sync_layout)
@@ -86,66 +86,107 @@ class MainWindow(QMainWindow):
         main_layout.addWidget(self.plot_area)
 
     def load_ecg(self):
-        path, _ = QFileDialog.getOpenFileName(self, "Seleccionar ECG", "data/raw", "EDF Files (*.edf)")
+        path, _ = QFileDialog.getOpenFileName(self, "Seleccionar ECG / EDF Unificado", "data/raw", "EDF Files (*.edf)")
         if path:
-            # Guardar explícitamente en self.ecg_signal, self.ecg_meta y self.annotations
-            self.ecg_signal, self.ecg_meta, self.annotations = self.ecg_processor.read_edf_with_annotations(path)
-            self.plot_area.set_ecg_data(self.ecg_signal, self.ecg_meta['fs'])
-            
-            ann_names = [a['description'] for a in self.annotations]
-            self.lbl_status.setText(f"ECG Cargado ({len(self.ecg_signal)} muestras). Eventos: {len(self.annotations)}")
+            import numpy as np
 
+            # 1. Resetear el offset
+            self.spin_offset.setValue(0.0)
+            self.current_offset_sec = 0.0
+
+            # 2. Leer canales y metadatos
+            signals, self.ecg_meta, self.annotations = self.ecg_processor.read_edf_all_channels(path)
+            labels = self.ecg_meta.get('labels', [])
+
+            # Canal principal (ECG)
+            self.ecg_signal = signals[0]
+            self.plot_area.set_ecg_data(self.ecg_signal, self.ecg_meta['fs'])
+            self.plot_area.draw_annotations(self.annotations)
+
+            # 3. Filtrar canales que sean explícitamente de EMG
+            emg_indices = [i for i, label in enumerate(labels) if 'EMG' in label.upper()]
+
+            if emg_indices:
+                # Es un EDF Unificado exportado previa o externamente
+                raw_emg = [signals[i] for i in emg_indices]
+                min_len = min(len(s) for s in raw_emg)
+                self.emg_signals = np.array([s[:min_len] for s in raw_emg])
+                
+                self.emg_fs = self.ecg_meta['fs']
+                self.plot_area.set_emg_data(self.emg_signals[0], self.emg_fs, 0.0)
+                self.lbl_status.setText(f"EDF Unificado Cargado: 1 ECG + {len(self.emg_signals)} EMG. Eventos: {len(self.annotations)}")
+            else:
+                # Es un ECG estándar (puro), se vacía el estado del EMG previo
+                self.emg_signals = None
+                self.plot_area.plot_emg.clear()
+                self.lbl_status.setText(f"ECG Cargado ({len(self.ecg_signal)} muestras). Eventos: {len(self.annotations)}")
+                               
     def load_emg(self):
         path, _ = QFileDialog.getOpenFileName(self, "Seleccionar EMG", "data/raw", "Archivos EMG (*.csv *.txt *.hpf)")
         if path:
             raw, meta = self.emg_processor.read_file(path)
             
             if raw.size > 0:
-                # Guardar explícitamente en self.emg_signals
+                # 1. Guardar explícitamente
                 self.emg_signals = self.emg_processor.filter_signal_multichannel(raw)
+                self.emg_fs = self.emg_processor.fs
+                
+                # 2. Actualizar visualización
                 self.plot_area.set_emg_data(self.emg_signals[0], self.emg_processor.fs, self.current_offset_sec)
                 self.lbl_status.setText(f"EMG Cargado: {self.emg_signals.shape[0]} canales musculares.")
             else:
                 self.lbl_status.setText(f"Metadatos .hpf leídos correctamente ({len(meta['channels'])} canales). Selecciona ahora el .csv.")
 
-    def auto_sync(self):
-        if self.ecg_raw is None or self.emg_raw is None:
+    def sync_auto(self):
+        """Estrategia de sincronización inteligente: Timestamps > Evento t0 > Manual"""
+        if self.ecg_signal is None or self.emg_signals is None:
             QMessageBox.warning(self, "Error", "Debes cargar ECG y EMG previamente.")
             return
 
-        min_len = min(len(self.ecg_raw), len(self.emg_raw))
-        _, offset_sec = SyncModule.calculate_offset(
-            self.ecg_raw[:min_len], self.emg_raw[:min_len], self.fs
-        )
-        
-        self.current_offset_sec = offset_sec
-        
-        # Bloquear señales momentáneamente para evitar bucles de actualización
-        self.spin_offset.blockSignals(True)
-        self.slider_offset.blockSignals(True)
-        
-        self.spin_offset.setValue(offset_sec)
-        self.slider_offset.setValue(int(offset_sec * 1000))
-        
-        self.spin_offset.blockSignals(False)
-        self.slider_offset.blockSignals(False)
-        
-        self.update_emg_plot()
-        self.lbl_status.setText(f"Sincronización automática calculada. Desfase: {offset_sec:.4f} s")
+        ecg_start = self.ecg_meta.get('startdate') if self.ecg_meta else None
+        emg_start = self.emg_processor.start_time
 
-    def on_spin_offset_changed(self, val: float):
-        self.current_offset_sec = val
-        self.slider_offset.blockSignals(True)
-        self.slider_offset.setValue(int(val * 1000))
-        self.slider_offset.blockSignals(False)
-        self.update_emg_plot()
+        # 1. Probar por timestamp de cabecera
+        offset = SyncModule.calculate_time_offset(ecg_start, emg_start)
 
-    def on_slider_offset_changed(self, val: int):
-        self.current_offset_sec = val / 1000.0
+        if offset != 0.0:
+            msg = f"Sincronizado automáticamente por cabecera.\nDesfase: {offset:.3f} s."
+        # 2. Si las cabeceras no son fiables, usar la marca del primer evento (t0)
+        elif hasattr(self, 'annotations') and len(self.annotations) > 0:
+            offset = self.annotations[0]['onset']
+            msg = f"Cabeceras no fiables. Alineado automáticamente con la marca del primer evento (t0 = {offset:.2f} s)."
+        # 3. Si no hay marcas, avisar para ajuste manual
+        else:
+            msg = "Relojes no sincronizados en origen y sin marcas t0. Realiza el ajuste mediante 'Offset Manual'."
+
+        # Aplicar a la interfaz
+        self.spin_offset.setValue(offset)
+        self.on_offset_changed(offset)
+
+        QMessageBox.information(self, "Sincronización Automática", msg)
+
+    def on_spin_changed(self, val: float):
+        """Se activa al cambiar el SpinBox (casilla)."""
+        self.slider_offset.blockSignals(True)
+        self.slider_offset.setValue(int(val))
+        self.slider_offset.blockSignals(False)
+        self.apply_offset(val)
+
+    def on_slider_changed(self, val: int):
+        """Se activa al arrastrar el Slider (barra)."""
         self.spin_offset.blockSignals(True)
-        self.spin_offset.setValue(self.current_offset_sec)
+        self.spin_offset.setValue(float(val))
         self.spin_offset.blockSignals(False)
-        self.update_emg_plot()
+        self.apply_offset(float(val))
+
+    def apply_offset(self, offset_val: float):
+        """Aplica el cambio en pantalla en tiempo real."""
+        self.current_offset_sec = offset_val
+        
+        # Usar la variable guardada self.emg_fs
+        if self.emg_signals is not None and len(self.emg_signals) > 0:
+            fs = getattr(self, 'emg_fs', 1000.0)
+            self.plot_area.set_emg_data(self.emg_signals[0], fs, self.current_offset_sec)
 
     def update_emg_plot(self):
         if self.emg_raw is not None:
@@ -177,3 +218,11 @@ class MainWindow(QMainWindow):
             EDFExporter.export_unified_edf(save_path, signals_to_export, headers, adj_annotations, start_date)
             
             QMessageBox.information(self, "Éxito", f"Archivo exportado correctamente con {len(signals_to_export)} canales en:\n{save_path}")
+
+    def on_offset_changed(self, val: float):
+        """Aplica el offset al EMG en tiempo real."""
+        self.current_offset_sec = float(val)
+
+        # Mover la señal de EMG en el eje X
+        if self.emg_signals is not None and len(self.emg_signals) > 0:
+            self.plot_area.set_emg_data(self.emg_signals[0], self.emg_processor.fs, self.current_offset_sec)

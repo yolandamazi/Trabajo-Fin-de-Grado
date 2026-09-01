@@ -3,45 +3,102 @@ import pyqtgraph as pg
 from PyQt5.QtWidgets import QWidget, QVBoxLayout
 
 class MultiChannelPlotWidget(QWidget):
-    """Widget de visualización multicanal con ejes de tiempo vinculados."""
     def __init__(self, parent=None):
         super().__init__(parent)
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
         
-        self.graphics_layout = pg.GraphicsLayoutWidget()
-        layout.addWidget(self.graphics_layout)
-        
-        # Subplot 1: ECG
-        self.p_ecg = self.graphics_layout.addPlot(row=0, col=0, title="Canal ECG (Referencia)")
-        self.p_ecg.showGrid(x=True, y=True)
-        self.p_ecg.setLabel('left', 'Amplitud', units='mV')
-        self.curve_ecg = self.p_ecg.plot(pen=pg.mkPen('#1f77b4', width=1.5))
-        
-        # Subplot 2: EMG
-        self.p_emg = self.graphics_layout.addPlot(row=1, col=0, title="Canal EMG (Ajustable)")
-        self.p_emg.showGrid(x=True, y=True)
-        self.p_emg.setLabel('left', 'Amplitud', units='uV')
-        self.p_emg.setLabel('bottom', 'Tiempo', units='s')
-        self.curve_emg = self.p_emg.plot(pen=pg.mkPen('#d62728', width=1.5))
-        
-        # Vincular zoom y desplazamiento horizontal entre ambos paneles
-        self.p_emg.setXLink(self.p_ecg)
-        
-        # Indicador de posición actual (Cursor sincronizado)
-        self.v_line_ecg = pg.InfiniteLine(angle=90, movable=False, pen=pg.mkPen('g', style=pg.QtCore.Qt.DashLine))
-        self.v_line_emg = pg.InfiniteLine(angle=90, movable=False, pen=pg.mkPen('g', style=pg.QtCore.Qt.DashLine))
-        self.p_ecg.addItem(self.v_line_ecg)
-        self.p_emg.addItem(self.v_line_emg)
+        # Crear vista de gráficos pyqtgraph
+        self.win = pg.GraphicsLayoutWidget()
+        layout.addWidget(self.win)
 
-    def set_ecg_data(self, signal: np.ndarray, fs: float):
-        t = np.arange(len(signal)) / fs
-        self.curve_ecg.setData(t, signal)
+        # Gráfica ECG
+        self.plot_ecg = self.win.addPlot(title="Canal ECG (Referencia + Eventos)")
+        self.plot_ecg.showGrid(x=True, y=True)
 
-    def set_emg_data(self, signal: np.ndarray, fs: float, offset_sec: float = 0.0):
-        t = (np.arange(len(signal)) / fs) + offset_sec
-        self.curve_emg.setData(t, signal)
+        self.win.nextRow()
 
-    def update_cursor_position(self, pos_sec: float):
-        self.v_line_ecg.setValue(pos_sec)
-        self.v_line_emg.setValue(pos_sec)
+        # Gráfica EMG
+        self.plot_emg = self.win.addPlot(title="Canal EMG (Ajustable)")
+        self.plot_emg.showGrid(x=True, y=True)
+
+        # Enlazar ejes X para zoom sincronizado
+        self.plot_emg.setXLink(self.plot_ecg)
+
+        # Variables internas de estado
+        self.ecg_signal = None
+        self.ecg_fs = 1000.0
+        self.annotations = []
+        self.current_offset = 0.0
+
+    def set_ecg_data(self, signal, fs):
+        """Guarda la señal de ECG y refresca el gráfico."""
+        self.ecg_signal = signal
+        self.ecg_fs = fs
+        self.update_ecg_plot()
+
+    def draw_annotations(self, annotations):
+        """Dibuja las marcas de eventos en su tiempo real sobre la señal de ECG."""
+        self.plot_ecg.clear()
+        
+        # Volver a pintar el ECG si existe
+        if self.ecg_signal is not None and len(self.ecg_signal) > 0:
+            time = [i / self.ecg_fs for i in range(len(self.ecg_signal))]
+            self.plot_ecg.plot(time, self.ecg_signal, pen=pg.mkPen('c', width=1))
+
+        if not annotations:
+            return
+
+        for ann in annotations:
+            # Las marcas pertenecen al eje de tiempo del ECG (no se desplazan con el offset)
+            pos_x = ann['onset']
+            
+            # Línea vertical
+            line = pg.InfiniteLine(
+                pos=pos_x, 
+                angle=90, 
+                pen=pg.mkPen(color='y', style=pg.QtCore.Qt.DashLine, width=1.5)
+            )
+            self.plot_ecg.addItem(line)
+
+            # Etiqueta textual (t0, t1...)
+            text = pg.TextItem(text=str(ann['description']), color='y', anchor=(0, 1))
+            text.setPos(pos_x, 0)
+            self.plot_ecg.addItem(text)
+
+    def set_emg_data(self, signal, fs, offset=0.0):
+        """Redibuja el canal EMG desplazando su eje X según el offset."""
+        self.plot_emg.clear()
+        if signal is not None and len(signal) > 0:
+            time = [(i / fs) + offset for i in range(len(signal))]
+            self.plot_emg.plot(time, signal, pen=pg.mkPen('r', width=1))
+            
+    def update_ecg_plot(self):
+        """
+        BARRE Y REDIBUJA EL PANEL ECG COMPLETO.
+        Garantiza que no queden marcas viejas colgadas.
+        """
+        # 1. Limpieza absoluta del lienzo ECG
+        self.plot_ecg.clear()
+
+        # 2. Dibujar la señal de ECG si existe
+        if self.ecg_signal is not None and len(self.ecg_signal) > 0:
+            time = [i / self.ecg_fs for i in range(len(self.ecg_signal))]
+            self.plot_ecg.plot(time, self.ecg_signal, pen=pg.mkPen('c', width=1))
+
+        # 3. Dibujar las marcas amarillas de eventos actuales
+        if self.annotations:
+            for ann in self.annotations:
+                pos_x = ann['onset'] - self.current_offset
+                
+                # Línea vertical
+                line = pg.InfiniteLine(
+                    pos=pos_x, 
+                    angle=90, 
+                    pen=pg.mkPen(color='y', style=pg.QtCore.Qt.DashLine, width=1.5)
+                )
+                self.plot_ecg.addItem(line)
+
+                # Etiqueta de texto
+                text = pg.TextItem(text=str(ann['description']), color='y', anchor=(0, 1))
+                text.setPos(pos_x, 0)
+                self.plot_ecg.addItem(text)

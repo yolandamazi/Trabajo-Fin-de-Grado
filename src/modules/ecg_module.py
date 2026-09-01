@@ -72,3 +72,36 @@ class ECGProcessor:
     def read_file(self, file_path: str):
         """Alias para mantener compatibilidad."""
         return self.read_edf_with_annotations(file_path)
+
+    def read_edf_all_channels(self, file_path: str):
+        """Lee todos los canales, sus etiquetas y las anotaciones de un archivo EDF+."""
+        f = pyedflib.EdfReader(file_path)
+        n_channels = f.signals_in_file
+        
+        signals = []
+        labels = []
+        for i in range(n_channels):
+            signals.append(f.readSignal(i))
+            labels.append(f.getSignalHeader(i).get('label', f'Ch_{i}'))
+        
+        meta = {
+            'label': labels[0] if labels else 'ECG',
+            'fs': float(f.getSampleFrequency(0)),
+            'startdate': f.getStartdatetime(),
+            'labels': labels
+        }
+
+        annotations = []
+        try:
+            raw_ann = f.readAnnotations()
+            for onset, duration, desc in zip(raw_ann[0], raw_ann[1], raw_ann[2]):
+                annotations.append({
+                    'onset': float(onset),
+                    'duration': float(duration) if duration else 0.0,
+                    'description': str(desc)
+                })
+        except Exception:
+            pass
+
+        f.close()
+        return signals, meta, annotations
