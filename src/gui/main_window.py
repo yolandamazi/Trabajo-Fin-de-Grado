@@ -10,14 +10,14 @@ from src.modules.ecg_module import ECGProcessor
 from src.modules.sync_module import SyncModule
 from src.modules.edf_converter import EDFExporter
 from src.gui.widgets import MultiChannelPlotWidget
-from src.utils.helpers import setup_logger
+# from src.utils.helpers import setup_logger
 
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Sincronizador Biomédico ECG/EMG - TFG")
         self.resize(1100, 700)
-        self.logger = setup_logger()
+        # self.logger = setup_logger()
         self.emg_processor = EMGProcessor()
         self.ecg_processor = ECGProcessor()
         self.ecg_raw = None
