@@ -1,104 +1,208 @@
-import numpy as np
+from PyQt5.QtWidgets import QWidget, QHBoxLayout, QVBoxLayout, QScrollArea, QSplitter, QSizePolicy, QLabel
+from PyQt5.QtCore import Qt
 import pyqtgraph as pg
-from PyQt5.QtWidgets import QWidget, QVBoxLayout
+import numpy as np
 
 class MultiChannelPlotWidget(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
-        layout = QVBoxLayout(self)
         
-        # Crear vista de gráficos pyqtgraph
-        self.win = pg.GraphicsLayoutWidget()
-        layout.addWidget(self.win)
-
-        # Gráfica ECG
-        self.plot_ecg = self.win.addPlot(title="Canal ECG (Referencia + Eventos)")
-        self.plot_ecg.showGrid(x=True, y=True)
-
-        self.win.nextRow()
-
-        # Gráfica EMG
-        self.plot_emg = self.win.addPlot(title="Canal EMG (Ajustable)")
-        self.plot_emg.showGrid(x=True, y=True)
-
-        # Enlazar ejes X para zoom sincronizado
-        self.plot_emg.setXLink(self.plot_ecg)
-
-        # Variables internas de estado
-        self.ecg_signal = None
-        self.ecg_fs = 1000.0
-        self.annotations = []
-        self.current_offset = 0.0
-
-    def set_ecg_data(self, signal, fs):
-        """Guarda la señal de ECG y refresca el gráfico."""
-        self.ecg_signal = signal
-        self.ecg_fs = fs
-        self.update_ecg_plot()
-
-    def draw_annotations(self, annotations):
-        """Dibuja las marcas de eventos en su tiempo real sobre la señal de ECG."""
-        self.plot_ecg.clear()
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         
-        # Volver a pintar el ECG si existe
-        if self.ecg_signal is not None and len(self.ecg_signal) > 0:
-            time = [i / self.ecg_fs for i in range(len(self.ecg_signal))]
-            self.plot_ecg.plot(time, self.ecg_signal, pen=pg.mkPen('c', width=1))
+        main_layout = QHBoxLayout(self)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        
+        self.splitter = QSplitter(Qt.Horizontal)
+        self.splitter.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        
+        # 1. PANEL IZQUIERDO: CANALES EDF / REGISTRO ORIGEN
+        left_container = QWidget()
+        left_layout = QVBoxLayout(left_container)
+        left_layout.setContentsMargins(2, 2, 2, 2)
+        
+        self.lbl_ecg_title = QLabel("CANALES EDF / REGISTRO ORIGEN")
+        self.lbl_ecg_title.setAlignment(Qt.AlignCenter)
+        self.lbl_ecg_title.setStyleSheet("""
+            QLabel {
+                background-color: #112233;
+                color: #00ccff;
+                font-weight: bold;
+                font-size: 13px;
+                padding: 6px;
+                border: 1px solid #224455;
+                border-radius: 4px;
+            }
+        """)
+        left_layout.addWidget(self.lbl_ecg_title)
+        
+        self.ecg_scroll = QScrollArea()
+        self.ecg_scroll.setWidgetResizable(True)
+        self.ecg_scroll.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.ecg_graphics = pg.GraphicsLayoutWidget()
+        self.ecg_scroll.setWidget(self.ecg_graphics)
+        left_layout.addWidget(self.ecg_scroll)
 
-        if not annotations:
+        # 2. PANEL DERECHO: CANALES EMG (CSV)
+        right_container = QWidget()
+        right_layout = QVBoxLayout(right_container)
+        right_layout.setContentsMargins(2, 2, 2, 2)
+        
+        self.lbl_emg_title = QLabel("CANALES EMG")
+        self.lbl_emg_title.setAlignment(Qt.AlignCenter)
+        self.lbl_emg_title.setStyleSheet("""
+            QLabel {
+                background-color: #2b1515;
+                color: #ff5555;
+                font-weight: bold;
+                font-size: 13px;
+                padding: 6px;
+                border: 1px solid #442222;
+                border-radius: 4px;
+            }
+        """)
+        right_layout.addWidget(self.lbl_emg_title)
+        
+        self.emg_scroll = QScrollArea()
+        self.emg_scroll.setWidgetResizable(True)
+        self.emg_scroll.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.emg_graphics = pg.GraphicsLayoutWidget()
+        self.emg_scroll.setWidget(self.emg_graphics)
+        right_layout.addWidget(self.emg_scroll)
+        
+        self.splitter.addWidget(left_container)
+        self.splitter.addWidget(right_container)
+        self.splitter.setSizes([600, 600])
+        
+        main_layout.addWidget(self.splitter)
+        
+        self.plots = []
+        self.master_plot = None
+
+    def update_all_channels(self, ecg_signals: list, ecg_headers: list, ecg_fs: float,
+                             emg_signals: np.ndarray = None, emg_headers: list = None, emg_fs: float = 1000.0,
+                             offset_sec: float = 0.0, annotations: list = None):
+        """Renderiza los canales rotulando claramente los ejes X (Tiempo) e Y (Amplitud)."""
+        self.ecg_graphics.clear()
+        self.emg_graphics.clear()
+        self.plots.clear()
+        self.master_plot = None
+
+        n_ecg_count = len(ecg_signals) if ecg_signals else 0
+        n_emg_count = emg_signals.shape[0] if emg_signals is not None and emg_signals.size > 0 else 0
+        
+        self.lbl_ecg_title.setText(f"CANALES EDF / REGISTRO ORIGEN ({n_ecg_count})")
+        self.lbl_emg_title.setText(f"CANALES EMG ({n_emg_count})")
+
+        # --- 1. PANEL IZQUIERDO: CANALES EDF ---
+        row_ecg = 0
+        if ecg_signals and len(ecg_signals) > 0:
+            for i, sig in enumerate(ecg_signals):
+                if len(sig) == 0:
+                    continue
+                
+                hdr = ecg_headers[i] if ecg_headers and i < len(ecg_headers) else {}
+                label = str(hdr.get('label') if isinstance(hdr, dict) else hdr or f"Canal_{i+1}")
+                unit = str(hdr.get('dimension', 'uV') if isinstance(hdr, dict) else 'uV')
+                
+                # Obtener la Fs INDIVIDUAL de este canal (si es un EDF unificado, cada canal trae la suya)
+                if isinstance(hdr, dict):
+                    ch_fs = float(hdr.get('sample_frequency') or hdr.get('sample_rate') or ecg_fs)
+                else:
+                    ch_fs = float(ecg_fs)
+
+                p = self.ecg_graphics.addPlot(row=row_ecg, col=0, title=f"[{i+1}] {label}")
+                p.setMinimumHeight(150)
+                p.showGrid(x=True, y=True)
+                p.enableAutoRange(axis=pg.ViewBox.YAxis, enable=True)
+                
+                p.setLabel('left', 'Amplitud', units=unit)
+                p.setLabel('bottom', 'Tiempo', units='s')
+                
+                # Eje X real calculado con la Fs de este canal en concreto
+                time_axis = np.arange(len(sig)) / ch_fs
+                p.plot(time_axis, sig, pen=pg.mkPen(color=(0, 220, 255), width=1))
+                
+                if self.master_plot is None:
+                    self.master_plot = p
+                else:
+                    p.setXLink(self.master_plot)
+
+                self.plots.append(p)
+                row_ecg += 1
+
+        self.ecg_graphics.setMinimumHeight(max(300, row_ecg * 160 + 50))
+
+        # --- 2. PANEL DERECHO: CANALES EMG ---
+        row_emg = 0
+        if emg_signals is not None and emg_signals.size > 0:
+            for i in range(n_emg_count):
+                sig = emg_signals[i]
+                
+                hdr = emg_headers[i] if emg_headers and i < len(emg_headers) else {}
+                label = str(hdr.get('label') if isinstance(hdr, dict) else hdr or f"EMG_{i+1}")
+                unit = str(hdr.get('dimension', 'uV') if isinstance(hdr, dict) else 'uV')
+                
+                if isinstance(hdr, dict):
+                    ch_fs = float(hdr.get('sample_frequency') or hdr.get('sample_rate') or emg_fs)
+                else:
+                    ch_fs = float(emg_fs)
+
+                p = self.emg_graphics.addPlot(row=row_emg, col=0, title=f"[EMG {i+1}] {label}")
+                p.setMinimumHeight(150)
+                p.showGrid(x=True, y=True)
+                p.enableAutoRange(axis=pg.ViewBox.YAxis, enable=True)
+                
+                p.setLabel('left', 'Amplitud', units=unit)
+                p.setLabel('bottom', 'Tiempo', units='s')
+                
+                time_axis = np.arange(len(sig)) / ch_fs
+                p.plot(time_axis, sig, pen=pg.mkPen(color=(255, 60, 60), width=1))
+                
+                if self.master_plot is None:
+                    self.master_plot = p
+                else:
+                    p.setXLink(self.master_plot)
+
+                self.plots.append(p)
+                row_emg += 1
+
+        self.emg_graphics.setMinimumHeight(max(300, row_emg * 160 + 50))
+
+        # --- 3. DIBUJAR MARCAS GLOBALES ---
+        self.draw_annotations(annotations)
+
+        # --- 4. AUTO-RANGO DE VISTA X ---
+        if self.master_plot is not None:
+            self.master_plot.enableAutoRange(axis=pg.ViewBox.XAxis, enable=True)
+            self.master_plot.autoRange()
+
+    def draw_annotations(self, annotations: list):
+        """Dibuja las marcas verticales instanciando una línea independiente para cada sub-gráfico."""
+        if not annotations or not self.plots:
             return
 
         for ann in annotations:
-            # Las marcas pertenecen al eje de tiempo del ECG (no se desplazan con el offset)
-            pos_x = ann['onset']
-            
-            # Línea vertical
-            line = pg.InfiniteLine(
-                pos=pos_x, 
-                angle=90, 
-                pen=pg.mkPen(color='y', style=pg.QtCore.Qt.DashLine, width=1.5)
-            )
-            self.plot_ecg.addItem(line)
+            # 1. Extraer onset y descripción según el tipo de dato (tupla o dict)
+            if isinstance(ann, (list, tuple)):
+                onset = float(ann[0])
+                desc = str(ann[2]) if len(ann) >= 3 else ""
+            elif isinstance(ann, dict):
+                onset = float(ann.get('onset', 0.0))
+                desc = str(ann.get('description', ''))
+            else:
+                continue
 
-            # Etiqueta textual (t0, t1...)
-            text = pg.TextItem(text=str(ann['description']), color='y', anchor=(0, 1))
-            text.setPos(pos_x, 0)
-            self.plot_ecg.addItem(text)
-
-    def set_emg_data(self, signal, fs, offset=0.0):
-        """Redibuja el canal EMG desplazando su eje X según el offset."""
-        self.plot_emg.clear()
-        if signal is not None and len(signal) > 0:
-            time = [(i / fs) + offset for i in range(len(signal))]
-            self.plot_emg.plot(time, signal, pen=pg.mkPen('r', width=1))
-            
-    def update_ecg_plot(self):
-        """
-        BARRE Y REDIBUJA EL PANEL ECG COMPLETO.
-        Garantiza que no queden marcas viejas colgadas.
-        """
-        # 1. Limpieza absoluta del lienzo ECG
-        self.plot_ecg.clear()
-
-        # 2. Dibujar la señal de ECG si existe
-        if self.ecg_signal is not None and len(self.ecg_signal) > 0:
-            time = [i / self.ecg_fs for i in range(len(self.ecg_signal))]
-            self.plot_ecg.plot(time, self.ecg_signal, pen=pg.mkPen('c', width=1))
-
-        # 3. Dibujar las marcas amarillas de eventos actuales
-        if self.annotations:
-            for ann in self.annotations:
-                pos_x = ann['onset'] - self.current_offset
-                
-                # Línea vertical
+            # 2. Crear un objeto pg.InfiniteLine NUEVO para cada canal p
+            for p in self.plots:
                 line = pg.InfiniteLine(
-                    pos=pos_x, 
+                    pos=onset, 
                     angle=90, 
-                    pen=pg.mkPen(color='y', style=pg.QtCore.Qt.DashLine, width=1.5)
+                    pen=pg.mkPen(color='y', width=1.5, style=Qt.DashLine),
+                    label=desc,
+                    labelOpts={
+                        'color': (255, 255, 0),
+                        'position': 0.9,
+                        'anchor': (0, 1)
+                    }
                 )
-                self.plot_ecg.addItem(line)
-
-                # Etiqueta de texto
-                text = pg.TextItem(text=str(ann['description']), color='y', anchor=(0, 1))
-                text.setPos(pos_x, 0)
-                self.plot_ecg.addItem(text)
+                p.addItem(line)

@@ -4,21 +4,25 @@ from scipy.signal import correlate, correlation_lags
 
 class SyncModule:
     @staticmethod
-    def calculate_time_offset(ecg_start: datetime, emg_start: datetime) -> float:
+    def calculate_time_offset(ecg_start: datetime, emg_start: datetime, ecg_duration: float = 0.0) -> float:
         """
-        Devuelve el desfase por timestamp SOLO si es razonable (< 5 minutos).
-        Si supera los 5 minutos, devuelve 0.0 señalando que las cabeceras no son fiables.
+        Calcula el desfase temporal por cabecera (timestamps).
+        Devuelve el desfase SOLO si cae dentro del rango temporal del registro ECG.
+        Si supera la duración del ECG o faltan cabeceras, devuelve 0.0.
         """
         if not ecg_start or not emg_start:
             return 0.0
 
         delta = (emg_start - ecg_start).total_seconds()
 
-        # Si el desfase entre relojes es menor a 300 s (5 min), nos fiamos del timestamp
-        if abs(delta) < 300:
+        # Si no se indica duración, se puede usar un valor por defecto
+        max_allowed_offset = ecg_duration if ecg_duration > 0 else 300.0
+
+        # Validar si el desfase cae dentro del tiempo de la prueba
+        if abs(delta) < max_allowed_offset:
             return delta
 
-        # Si es mayor, los relojes no estaban sincronizados en origen
+        # Si el desfase es mayor que la duración del ECG, las horas de los equipos no estaban coordinadas
         return 0.0
 
     @staticmethod

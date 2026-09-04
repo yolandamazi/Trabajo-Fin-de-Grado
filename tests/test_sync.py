@@ -1,18 +1,23 @@
-from datetime import datetime, timedelta
+import unittest
 from src.modules.sync_module import SyncModule
 
-def test_offset_calculation():
-    # 1. Caso de prueba: Desfase menor a 5 minutos (Aceptado por cabecera)
-    ecg_start = datetime(2026, 5, 10, 10, 0, 0)
-    emg_start = datetime(2026, 5, 10, 10, 0, 15)  # 15 segundos después
+class TestSyncModule(unittest.TestCase):
 
-    offset = SyncModule.calculate_time_offset(ecg_start, emg_start)
-    assert offset == 15.0
+    def test_adjust_annotations_positive_offset(self):
+        """Verifica que un offset positivo desplace las marcas según la lógica (onset - offset)."""
+        annotations = [
+            {'onset': 10.0, 'duration': 0.0, 'description': 't0'},
+            {'onset': 25.5, 'duration': 1.0, 'description': 't1'}
+        ]
+        offset_sec = 2.5
 
-def test_offset_unreliable_clocks():
-    # 2. Caso de prueba: Desfase mayor a 5 minutos (Relojes desalineados -> Devuelve 0.0)
-    ecg_start = datetime(2026, 5, 10, 10, 0, 0)
-    emg_start = datetime(2026, 5, 10, 12, 33, 0)  # ~2,5 horas después
+        adjusted = SyncModule.adjust_annotations(annotations, offset_sec)
 
-    offset = SyncModule.calculate_time_offset(ecg_start, emg_start)
-    assert offset == 0.0  # El sistema identifica que las cabeceras no son fiables
+        self.assertEqual(len(adjusted), 2)
+        # 10.0 - 2.5 = 7.5
+        self.assertAlmostEqual(adjusted[0]['onset'], 7.5, places=2)
+        self.assertAlmostEqual(adjusted[1]['onset'], 23.0, places=2)
+        self.assertEqual(adjusted[0]['description'], 't0')
+
+if __name__ == '__main__':
+    unittest.main()

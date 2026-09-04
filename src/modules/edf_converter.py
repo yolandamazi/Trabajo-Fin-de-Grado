@@ -1,73 +1,82 @@
-from datetime import datetime
-import numpy as np
+import os
+import warnings
 import pyedflib
+import numpy as np
 
 class EDFExporter:
     @staticmethod
-    def export_unified_edf(output_path: str, signals: list, headers: list, 
-                            annotations: list = None, start_date: datetime = None) -> bool:
-        """
-        Exporta ECG + canales EMG + Anotaciones a un único archivo EDF+.
-        Ajusta escala y redondeo de rangos físicos para cumplir con el límite de 8 caracteres de EDF+.
-        """
-        n_channels = len(signals)
-        writer = pyedflib.EdfWriter(output_path, n_channels, file_type=pyedflib.FILETYPE_EDFPLUS)
-        
-        if start_date:
-            writer.setStartdatetime(start_date)
+    def export_unified_edf(output_path: str, 
+                           signals: list, 
+                           headers: list, 
+                           annotations: list = None, 
+                           start_date=None, 
+                           **kwargs):
+        """Exporta el archivo EDF+ completo usando writeSamples para escribir todos los bloques."""
+        warnings.filterwarnings("ignore", category=UserWarning, module="pyedflib")
 
+        os.makedirs(os.path.dirname(output_path), exist_ok=True)
+
+        n_channels = len(signals)
         channel_info = []
-        processed_signals = []
 
         for i, h in enumerate(headers):
-            sig = np.array(signals[i], dtype=np.float64)
-            unit = h.get('dimension', 'uV')
+            sig = np.ascontiguousarray(signals[i], dtype=np.float64)
+            if len(sig) > 0:
+                raw_min = float(np.min(sig))
+                raw_max = float(np.max(sig))
+            else:
+                raw_min, raw_max = -32768.0, 32767.0
 
-            # Si el canal es EMG en uV pero los datos están en Voltios (< 0.1 V), escalar a uV (x 1,000,000)
-            if unit == 'uV' and len(sig) > 0 and np.max(np.abs(sig)) < 0.1:
-                sig = sig * 1e6
+            if raw_min == raw_max:
+                raw_min -= 1.0
+                raw_max += 1.0
 
-            processed_signals.append(sig)
+            fs_val = int(h.get('sample_frequency') or h.get('sample_rate') or 1000)
+            unit_val = str(h.get('dimension') or h.get('units') or 'uV')[:8]
 
-            # Obtener mínimos y máximos físicos
-            p_min = float(np.min(sig)) if len(sig) > 0 else -100.0
-            p_max = float(np.max(sig)) if len(sig) > 0 else 100.0
-
-            if p_min == p_max:
-                p_min -= 1.0
-                p_max += 1.0
-
-            # Redondear para garantizar que la representación en string no exceda 8 caracteres
-            p_min_rounded = float(f"{p_min:.4g}")
-            p_max_rounded = float(f"{p_max:.4g}")
-
-            # Asegurar pequeño margen si tras el redondeo quedaran iguales
-            if p_min_rounded == p_max_rounded:
-                p_min_rounded -= 0.01
-                p_max_rounded += 0.01
-
-            fs_val = h.get('sample_frequency') or h.get('sample_rate') or 1000
-
-            info = {
-                'label': h.get('label', f'Channel_{i}')[:16],
-                'dimension': unit,
-                'sample_frequency': int(fs_val),
-                'physical_min': p_min_rounded,
-                'physical_max': p_max_rounded,
-                'digital_min': -32768,
+            channel_info.append({
+                'label': str(h.get('label', f'Ch_{i+1}'))[:16],
+                'dimension': unit_val,
+                'sample_frequency': fs_val,
+                'physical_max': raw_max,
+                'physical_min': raw_min,
                 'digital_max': 32767,
+                'digital_min': -32768,
                 'transducer': '',
                 'prefilter': ''
-            }
-            channel_info.append(info)
+            })
 
+        writer = pyedflib.EdfWriter(output_path, n_channels, file_type=pyedflib.FILETYPE_EDFPLUS)
         writer.setSignalHeaders(channel_info)
-        writer.writeSamples(processed_signals)
 
-        # Escribir las marcas de eventos (t0, t1, t2...)
+        if start_date:
+            try:
+                writer.setStartdatetime(start_date)
+            except Exception:
+                pass
+
+        # CLAVE: Formatear los arrays y llamar a writeSamples para volcar la sesión completa
+        formatted_signals = [np.ascontiguousarray(sig, dtype=np.float64) for sig in signals]
+        writer.writeSamples(formatted_signals)
+
+        # Escribir las anotaciones
         if annotations:
             for ann in annotations:
-                writer.writeAnnotation(ann['onset'], ann['duration'], ann['description'])
+                try:
+                    if isinstance(ann, dict):
+                        onset = float(ann.get('onset', 0.0))
+                        duration = float(ann.get('duration', -1.0))
+                        desc = str(ann.get('description', '')).strip()
+                    elif isinstance(ann, (list, tuple)):
+                        onset = float(ann[0])
+                        duration = float(ann[1]) if len(ann) >= 3 else -1.0
+                        desc = str(ann[-1]).strip()
+                    else:
+                        continue
+
+                    if desc:
+                        writer.writeAnnotation(onset, duration, desc)
+                except Exception as e:
+                    print(f"Aviso escribiendo marca {ann}: {e}")
 
         writer.close()
-        return True
