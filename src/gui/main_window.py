@@ -4,10 +4,9 @@ from PyQt5.QtWidgets import QMainWindow, QPushButton, QFileDialog, QLabel, QVBox
 from PyQt5.QtCore import Qt
 from src.modules.emg_module import EMGProcessor
 from src.modules.ecg_module import ECGProcessor
-from src.modules.sync_module import SyncModule
 from src.modules.edf_converter import EDFExporter
 from src.gui.widgets import MultiChannelPlotWidget
-from src.gui.metadata_dialog import MetadataDialog
+from src.gui.metadata_window import MetadataDialog
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -36,16 +35,17 @@ class MainWindow(QMainWindow):
         self.showMaximized()
 
     def init_ui(self):
+        """Inicializa la interfaz UI/UX de la aplicación"""
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
         main_layout = QVBoxLayout(central_widget)
 
-        # 1. Barra superior de acciones
+        # Barra superior de acciones
         file_layout = QHBoxLayout()
         
-        self.btn_load_ecg = QPushButton("1. Cargar EDF Completo (.edf)")
-        self.btn_load_ecg.clicked.connect(self.load_edf)
-        file_layout.addWidget(self.btn_load_ecg)
+        self.btn_load_edf = QPushButton("1. Cargar EDF (.edf)")
+        self.btn_load_edf.clicked.connect(self.load_edf)
+        file_layout.addWidget(self.btn_load_edf)
 
         self.btn_extract_ecg = QPushButton("2. Extraer Canal ECG")
         self.btn_extract_ecg.clicked.connect(self.extract_ecg)
@@ -59,17 +59,17 @@ class MainWindow(QMainWindow):
         self.btn_inspect.clicked.connect(self.show_metadata_inspector)
         file_layout.addWidget(self.btn_inspect)
 
-        self.btn_export = QPushButton("5. Exportar EDF Unificado")
+        self.btn_export = QPushButton("5. Exportar EDF/EDF+ Unificado")
         self.btn_export.clicked.connect(self.export_edf)
         file_layout.addWidget(self.btn_export)
 
-        self.btn_load_unified = QPushButton("6. Cargar EDF Unificado")
+        self.btn_load_unified = QPushButton("6. Mostrar EDF/EDF+ Unificado")
         self.btn_load_unified.clicked.connect(self.load_edf)
         file_layout.addWidget(self.btn_load_unified)
 
         main_layout.addLayout(file_layout)
 
-        # 2. Controles de sincronización y enfoque
+        # Controles de sincronización y enfoque
         sync_group = QGroupBox("Controles de Sincronización Temporal")
         sync_layout = QHBoxLayout()
 
@@ -98,15 +98,16 @@ class MainWindow(QMainWindow):
         sync_group.setLayout(sync_layout)
         main_layout.addWidget(sync_group)
 
-        # 3. Estado de la sesión
-        self.lbl_status = QLabel("Estado: Cargue los datos para iniciar la sincronización [Izquierda: Panel EDF | Derecha: Panel EMG].")
+        # Estado de la sesión
+        self.lbl_status = QLabel("Estado: Cargue los datos.")
         main_layout.addWidget(self.lbl_status)
 
-        # 4. Visor multicanal
+        # Visor multicanal
         self.plot_area = MultiChannelPlotWidget()
         main_layout.addWidget(self.plot_area, 1)
 
     def refresh_gui_plots(self):
+        """Actualiza la interfaz UI/UX"""
         self.plot_area.update_all_channels(
             ecg_signals=self.ecg_signals_all,
             ecg_headers=self.ecg_headers_all,
@@ -119,8 +120,8 @@ class MainWindow(QMainWindow):
         )
 
     def load_edf(self):
-        """Carga el archivo EDF completo de origen."""
-        path, _ = QFileDialog.getOpenFileName(self, "Seleccionar ECG / EDF", "data/raw", "EDF Files (*.edf)")
+        """Carga el archivo EDF completo."""
+        path, _ = QFileDialog.getOpenFileName(self, "Seleccionar ECG / EDF", "data", "EDF Files (*.edf)")
         if path:
             self.spin_offset.setValue(0.0)
             self.current_offset_sec = 0.0
@@ -129,7 +130,7 @@ class MainWindow(QMainWindow):
             if isinstance(res, tuple) and len(res) == 3:
                 signals, meta, annotations = res
             else:
-                QMessageBox.critical(self, "Error", "No se pudieron leer las señales del EDF.")
+                QMessageBox.critical(self, "Error", "No se pudieron leer las señales del archivo EDF.")
                 return
 
             self.ecg_signals_all = signals
@@ -178,7 +179,7 @@ class MainWindow(QMainWindow):
         )
 
     def load_emg(self):
-        """Carga la matriz de datos (.csv), estandarizando magnitudes a uV."""
+        """Carga los datos del archivo (.csv)."""
         path, _ = QFileDialog.getOpenFileName(self, "Seleccionar Señal EMG", "data/raw", "Archivos CSV/TXT (*.csv *.txt)")
         if path:
             raw, meta = self.emg_processor.read_file(path)
@@ -187,64 +188,65 @@ class MainWindow(QMainWindow):
                 self.emg_signals = self.emg_processor.filter_signal_multichannel(raw)
                 self.emg_fs = float(self.emg_processor.fs)
                 
+                unit = meta.get('dimension')
                 names = getattr(self.emg_processor, 'channel_names', [])
                 if names and len(names) == self.emg_signals.shape[0]:
-                    self.emg_headers = [{'label': name, 'dimension': 'uV'} for name in names]
+                    self.emg_headers = [{'label': name, 'dimension': unit} for name in names]
                 else:
-                    self.emg_headers = meta.get('headers', [{'label': f'EMG_{i+1}', 'dimension': 'uV'} for i in range(self.emg_signals.shape[0])])
+                    self.emg_headers = meta.get('headers', [{'label': f'EMG_{i+1}', 'dimension': unit} for i in range(self.emg_signals.shape[0])])
 
                 self.refresh_gui_plots()
-                self.lbl_status.setText(f"EMG Cargado: {self.emg_signals.shape[0]} canales musculares estandarizados a uV.")
-                # Añadir solo esto al final de tu load_emg actual:
+                self.lbl_status.setText(f"EMG Cargado: {self.emg_signals.shape[0]} canales musculares.")
+                
                 self.emg_signals_raw = self.emg_signals.copy()
                 self.apply_offset(self.current_offset_sec)
 
     def sync_auto(self):
-        """Calcula el offset automático y aplica el desplazamiento + relleno."""
+        """Calcula el offset automático y aplica el desplazamiento + relleno/padding."""
         if not self.ecg_signals_all or self.emg_signals is None:
             QMessageBox.warning(self, "Error", "Debes cargar ECG y EMG previamente.")
             return
 
-        # Calcular offset (por cabecera o por marca de anotación)
         offset = 0.0
         if hasattr(self, 'annotations') and len(self.annotations) > 0:
-            ann = self.annotations[0]
-            offset = float(ann[0]) if isinstance(ann, (list, tuple)) else float(ann.get('onset', 0.0))
+            ann = self.annotations[0] 
+            if isinstance(ann, (list, tuple)):
+                offset = float(ann[0])
+            else:
+                float(ann.get('onset', 0.0))
 
-        # Actualizar control numérico y EJECUTAR desplazamiento + relleno
         self.spin_offset.setValue(offset)
         self.apply_offset(offset)
 
     def on_spin_changed(self, val: float):
+        """Sincroniza el slider con el valor numérico del spinbox y aplica el nuevo offset temporal."""
         self.slider_offset.blockSignals(True)
         self.slider_offset.setValue(int(val))
         self.slider_offset.blockSignals(False)
         self.apply_offset(val)
 
     def on_slider_changed(self, val: int):
+        """Sincroniza el spinbox con la posición del slider y aplica el nuevo offset temporal."""
         self.spin_offset.blockSignals(True)
         self.spin_offset.setValue(float(val))
         self.spin_offset.blockSignals(False)
         self.apply_offset(float(val))
 
     def apply_offset(self, offset_sec: float):
-        """Alinea la señal EMG rellenando con ceros al inicio y ajustando a segundos enteros."""
+        """Alinea la señal EMG según el offset aplicado, y rellena con ceros (padding)"""
         self.current_offset_sec = float(offset_sec)
 
         if getattr(self, 'emg_signals_raw', None) is not None and self.ecg_signals_all:
-            # 1. Duración total del ECG en bloques enteros de 1 segundo
             ecg_dur_sec = len(self.ecg_signals_all[0]) / float(self.ecg_fs)
             total_records = int(np.ceil(ecg_dur_sec))
 
             emg_fs = float(self.emg_fs)
             target_emg_samples = total_records * int(np.round(emg_fs))
 
-            # 2. Ceros al inicio (offset de sincronización)
             pad_start = int(np.round(max(0.0, self.current_offset_sec) * emg_fs))
 
             aligned = []
             for sig in self.emg_signals_raw:
-                # 3. Ceros al final hasta completar los bloques del registro
                 pad_end = max(0, target_emg_samples - (pad_start + len(sig)))
                 sig_padded = np.pad(sig, (pad_start, pad_end), mode='constant', constant_values=0.0)[:target_emg_samples]
                 aligned.append(sig_padded)
@@ -254,7 +256,7 @@ class MainWindow(QMainWindow):
         self.refresh_gui_plots()
 
     def export_edf(self):
-        """Exportación a EDF+ garantizando bloques enteros de 1s para ECG y EMG."""
+        """Exportación a EDF/EDF+ con las señales ECG y EMG."""
         if not self.ecg_signals_all or self.emg_signals is None:
             QMessageBox.warning(self, "Error", "Debe cargar ECG y EMG antes de exportar.")
             return
@@ -272,7 +274,7 @@ class MainWindow(QMainWindow):
         headers = []
         signals_to_export = []
 
-        # 1. Canales ECG (Asegurar muestras exactas al bloque entero)
+        # Canal ECG
         target_ecg_samples = total_records * int(np.round(self.ecg_fs))
         for i, sig in enumerate(self.ecg_signals_all):
             h = self.ecg_headers_all[i] if i < len(self.ecg_headers_all) else {}
@@ -287,14 +289,14 @@ class MainWindow(QMainWindow):
                 sig_padded = sig[:target_ecg_samples]
             signals_to_export.append(sig_padded)
 
-        # 2. Canales EMG (matriz ya rellena y alineada)
+        # Canal o Canales EMG 
         ch_names = getattr(self.emg_processor, 'channel_names', [])
         for i in range(self.emg_signals.shape[0]):
             name = ch_names[i] if i < len(ch_names) else f"EMG_{i+1}"
             headers.append({'label': str(name)[:16], 'sample_rate': self.emg_fs, 'dimension': 'uV'})
             signals_to_export.append(self.emg_signals[i])
 
-        # 3. Exportar archivo unificado
+        # Exportar archivo unificado
         start_date = getattr(self.emg_processor, 'start_time', None) or self.ecg_meta.get('startdate')
         EDFExporter.export_unified_edf(save_path, signals_to_export, headers, self.annotations, start_date)
 
@@ -304,37 +306,49 @@ class MainWindow(QMainWindow):
         )
 
     def show_metadata_inspector(self):
-        """Abre la ventana modal con la auditoría de metadatos de los canales actuales."""
+        """Abre la ventana con los metadatos"""
         if not self.ecg_signals_all and self.emg_signals is None:
             QMessageBox.warning(self, "Aviso", "Carga al menos un archivo antes de inspeccionar metadatos.")
             return
 
-        # Recopilar cabeceras actuales
         all_headers = []
-
-        # Cabeceras ECG
+        
+        # Cabeceras del ECG 
         for i, h in enumerate(self.ecg_headers_all):
+            # Lee la unidad guardada en el archivo. Si no existe, usa 'uV' como respaldo
+            unit = str(h.get('dimension') or h.get('units') or 'uV').strip()
+            fs_val = float(h.get('sample_rate') or h.get('sample_frequency') or self.ecg_fs)
+            
             all_headers.append({
                 'label': h.get('label', f'ECG_{i+1}'),
-                'sample_rate': self.ecg_fs,
-                'dimension': h.get('dimension', 'mV')
+                'sample_rate': fs_val,
+                'dimension': unit
             })
 
-        # Cabeceras EMG
+        # Cabeceras EMG 
         if self.emg_signals is not None and self.emg_signals.size > 0:
             ch_names = getattr(self.emg_processor, 'channel_names', [])
+            emg_units = getattr(self.emg_processor, 'units', [])
+            
             for i in range(self.emg_signals.shape[0]):
                 name = ch_names[i] if i < len(ch_names) else f"EMG_{i+1}"
+                
+                unit = 'uV'
+                if hasattr(self, 'emg_headers') and i < len(self.emg_headers):
+                    hdr_i = self.emg_headers[i]
+                    if isinstance(hdr_i, dict):
+                        unit = hdr_i.get('dimension') or hdr_i.get('units') or unit
+                elif i < len(emg_units) and emg_units[i]:
+                    unit = emg_units[i]
+
                 all_headers.append({
                     'label': name,
                     'sample_rate': getattr(self, 'emg_fs', 1000.0),
-                    'dimension': 'uV'
+                    'dimension': str(unit).strip()
                 })
 
-        # Calcular duración total en segundos
         dur_sec = len(self.ecg_signals_all[0]) / float(self.ecg_fs) if self.ecg_signals_all else 0.0
 
-        # Mostrar diálogo modal
         dialog = MetadataDialog(
             parent=self,
             headers=all_headers,

@@ -15,12 +15,12 @@ class MultiChannelPlotWidget(QWidget):
         self.splitter = QSplitter(Qt.Horizontal)
         self.splitter.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         
-        # 1. PANEL IZQUIERDO: CANALES EDF / REGISTRO ORIGEN
+        # PANEL IZQUIERDO: CANALES EDF 
         left_container = QWidget()
         left_layout = QVBoxLayout(left_container)
         left_layout.setContentsMargins(2, 2, 2, 2)
         
-        self.lbl_ecg_title = QLabel("CANALES EDF / REGISTRO ORIGEN")
+        self.lbl_ecg_title = QLabel("CANALES EDF")
         self.lbl_ecg_title.setAlignment(Qt.AlignCenter)
         self.lbl_ecg_title.setStyleSheet("""
             QLabel {
@@ -42,7 +42,7 @@ class MultiChannelPlotWidget(QWidget):
         self.ecg_scroll.setWidget(self.ecg_graphics)
         left_layout.addWidget(self.ecg_scroll)
 
-        # 2. PANEL DERECHO: CANALES EMG (CSV)
+        # PANEL DERECHO: CANALES EMG (CSV)
         right_container = QWidget()
         right_layout = QVBoxLayout(right_container)
         right_layout.setContentsMargins(2, 2, 2, 2)
@@ -81,7 +81,7 @@ class MultiChannelPlotWidget(QWidget):
     def update_all_channels(self, ecg_signals: list, ecg_headers: list, ecg_fs: float,
                              emg_signals: np.ndarray = None, emg_headers: list = None, emg_fs: float = 1000.0,
                              offset_sec: float = 0.0, annotations: list = None):
-        """Renderiza los canales rotulando claramente los ejes X (Tiempo) e Y (Amplitud)."""
+        """Actualiza los canales de cada archivo."""
         self.ecg_graphics.clear()
         self.emg_graphics.clear()
         self.plots.clear()
@@ -90,10 +90,10 @@ class MultiChannelPlotWidget(QWidget):
         n_ecg_count = len(ecg_signals) if ecg_signals else 0
         n_emg_count = emg_signals.shape[0] if emg_signals is not None and emg_signals.size > 0 else 0
         
-        self.lbl_ecg_title.setText(f"CANALES EDF / REGISTRO ORIGEN ({n_ecg_count})")
+        self.lbl_ecg_title.setText(f"CANALES EDF ({n_ecg_count})")
         self.lbl_emg_title.setText(f"CANALES EMG ({n_emg_count})")
 
-        # --- 1. PANEL IZQUIERDO: CANALES EDF ---
+        # PANEL IZQUIERDO: CANALES EDF
         row_ecg = 0
         if ecg_signals and len(ecg_signals) > 0:
             for i, sig in enumerate(ecg_signals):
@@ -101,13 +101,14 @@ class MultiChannelPlotWidget(QWidget):
                     continue
                 
                 hdr = ecg_headers[i] if ecg_headers and i < len(ecg_headers) else {}
-                label = str(hdr.get('label') if isinstance(hdr, dict) else hdr or f"Canal_{i+1}")
-                unit = str(hdr.get('dimension', 'uV') if isinstance(hdr, dict) else 'uV')
                 
-                # Obtener la Fs INDIVIDUAL de este canal (si es un EDF unificado, cada canal trae la suya)
                 if isinstance(hdr, dict):
+                    label = str(hdr.get('label', f"Canal_{i+1}"))
+                    unit = str(hdr.get('dimension') or hdr.get('units') or 'uV').strip()
                     ch_fs = float(hdr.get('sample_frequency') or hdr.get('sample_rate') or ecg_fs)
                 else:
+                    label = str(hdr or f"Canal_{i+1}")
+                    unit = 'uV'
                     ch_fs = float(ecg_fs)
 
                 p = self.ecg_graphics.addPlot(row=row_ecg, col=0, title=f"[{i+1}] {label}")
@@ -118,7 +119,6 @@ class MultiChannelPlotWidget(QWidget):
                 p.setLabel('left', 'Amplitud', units=unit)
                 p.setLabel('bottom', 'Tiempo', units='s')
                 
-                # Eje X real calculado con la Fs de este canal en concreto
                 time_axis = np.arange(len(sig)) / ch_fs
                 p.plot(time_axis, sig, pen=pg.mkPen(color=(0, 220, 255), width=1))
                 
@@ -132,19 +132,21 @@ class MultiChannelPlotWidget(QWidget):
 
         self.ecg_graphics.setMinimumHeight(max(300, row_ecg * 160 + 50))
 
-        # --- 2. PANEL DERECHO: CANALES EMG ---
+        # PANEL DERECHO: CANALES EMG
         row_emg = 0
         if emg_signals is not None and emg_signals.size > 0:
             for i in range(n_emg_count):
                 sig = emg_signals[i]
                 
                 hdr = emg_headers[i] if emg_headers and i < len(emg_headers) else {}
-                label = str(hdr.get('label') if isinstance(hdr, dict) else hdr or f"EMG_{i+1}")
-                unit = str(hdr.get('dimension', 'uV') if isinstance(hdr, dict) else 'uV')
                 
                 if isinstance(hdr, dict):
+                    label = str(hdr.get('label', f"EMG_{i+1}"))
+                    unit = str(hdr.get('dimension') or hdr.get('units') or 'uV').strip()
                     ch_fs = float(hdr.get('sample_frequency') or hdr.get('sample_rate') or emg_fs)
                 else:
+                    label = str(hdr or f"EMG_{i+1}")
+                    unit = 'uV'
                     ch_fs = float(emg_fs)
 
                 p = self.emg_graphics.addPlot(row=row_emg, col=0, title=f"[EMG {i+1}] {label}")
@@ -168,21 +170,19 @@ class MultiChannelPlotWidget(QWidget):
 
         self.emg_graphics.setMinimumHeight(max(300, row_emg * 160 + 50))
 
-        # --- 3. DIBUJAR MARCAS GLOBALES ---
+        # DIBUJAR MARCAS / ANOTACIONES
         self.draw_annotations(annotations)
 
-        # --- 4. AUTO-RANGO DE VISTA X ---
         if self.master_plot is not None:
             self.master_plot.enableAutoRange(axis=pg.ViewBox.XAxis, enable=True)
             self.master_plot.autoRange()
 
     def draw_annotations(self, annotations: list):
-        """Dibuja las marcas verticales instanciando una línea independiente para cada sub-gráfico."""
+        """Dibuja las anotaciones instanciando una línea independiente para cada sub-gráfico/canal."""
         if not annotations or not self.plots:
             return
 
         for ann in annotations:
-            # 1. Extraer onset y descripción según el tipo de dato (tupla o dict)
             if isinstance(ann, (list, tuple)):
                 onset = float(ann[0])
                 desc = str(ann[2]) if len(ann) >= 3 else ""
@@ -192,7 +192,6 @@ class MultiChannelPlotWidget(QWidget):
             else:
                 continue
 
-            # 2. Crear un objeto pg.InfiniteLine NUEVO para cada canal p
             for p in self.plots:
                 line = pg.InfiniteLine(
                     pos=onset, 

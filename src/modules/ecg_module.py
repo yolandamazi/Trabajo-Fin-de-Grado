@@ -6,7 +6,7 @@ class ECGProcessor:
         pass
 
     def read_edf_all_channels(self, file_path: str):
-        """Lee todas las señales del EDF convirtiendo automáticamente a uV para estandarizar."""
+        """Lee todas las señales del EDF respetando sus unidades y magnitudes físicas originales."""
         f = pyedflib.EdfReader(file_path)
         n_channels = f.signals_in_file
         signals = []
@@ -16,14 +16,8 @@ class ECGProcessor:
             sig = np.array(f.readSignal(i), dtype=np.float64)
             unit = f.getPhysicalDimension(i).strip()
             
-            # Convertir de mV a uV si corresponde
-            if 'mv' in unit.lower():
-                sig = sig * 1000.0
-                unit = 'uV'
-            elif 'v' in unit.lower() and 'uv' not in unit.lower():
-                sig = sig * 1e6
-                unit = 'uV'
-            elif not unit:
+            # Asignar unidad de respaldo solo si la cabecera del archivo viene vacía
+            if not unit:
                 unit = 'uV'
 
             signals.append(sig)

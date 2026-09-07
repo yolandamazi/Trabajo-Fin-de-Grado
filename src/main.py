@@ -7,8 +7,6 @@ def main():
     ensure_directories_exist()
     app = QApplication(sys.argv)
     window = MainWindow()
-    
-    # Abrir maximizada para dar espacio a la vista split (EMG | ECG)
     window.showMaximized()
     
     sys.exit(app.exec_())

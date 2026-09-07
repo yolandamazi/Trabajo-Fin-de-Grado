@@ -5,7 +5,7 @@ from PyQt5.QtCore import Qt
 class MetadataDialog(QDialog):
     def __init__(self, parent=None, headers=None, annotations=None, duration_sec=0.0, file_info=""):
         super().__init__(parent)
-        self.setWindowTitle("Inspección de Metadatos del Estudio")
+        self.setWindowTitle("Metadatos de las señales")
         self.resize(750, 500)
 
         self.headers = headers or []
@@ -16,6 +16,7 @@ class MetadataDialog(QDialog):
         self.init_ui()
 
     def init_ui(self):
+        """Inicializa la interfaz UI/UX de la ventana"""
         layout = QVBoxLayout(self)
 
         # Tab Widget para organizar la info
@@ -39,6 +40,7 @@ class MetadataDialog(QDialog):
         layout.addLayout(btn_layout)
 
     def _create_channels_tab(self):
+        """Genera la pestaña con una tabla detallada de etiquetas, frecuencias, unidades físicas y volumen de muestras."""
         widget = QWidget()
         layout = QVBoxLayout(widget)
 
@@ -84,6 +86,7 @@ class MetadataDialog(QDialog):
         return widget
 
     def _create_annotations_tab(self):
+        """Genera la pestaña de anotaciones y eventos, mostrando el recuento total y una tabla con los instantes de inicio, duraciones y etiquetas."""
         widget = QWidget()
         layout = QVBoxLayout(widget)
 

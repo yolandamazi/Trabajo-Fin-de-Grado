@@ -5,13 +5,9 @@ import numpy as np
 
 class EDFExporter:
     @staticmethod
-    def export_unified_edf(output_path: str, 
-                           signals: list, 
-                           headers: list, 
-                           annotations: list = None, 
-                           start_date=None, 
-                           **kwargs):
-        """Exporta el archivo EDF+ completo usando writeSamples para escribir todos los bloques."""
+    def export_unified_edf(output_path: str, signals: list, headers: list, 
+                           annotations: list = None, start_date=None, **kwargs):
+        """Exporta el archivo EDF+ completo"""
         warnings.filterwarnings("ignore", category=UserWarning, module="pyedflib")
 
         os.makedirs(os.path.dirname(output_path), exist_ok=True)
@@ -55,11 +51,9 @@ class EDFExporter:
             except Exception:
                 pass
 
-        # CLAVE: Formatear los arrays y llamar a writeSamples para volcar la sesión completa
         formatted_signals = [np.ascontiguousarray(sig, dtype=np.float64) for sig in signals]
         writer.writeSamples(formatted_signals)
 
-        # Escribir las anotaciones
         if annotations:
             for ann in annotations:
                 try:
