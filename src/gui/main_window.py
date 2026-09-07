@@ -7,6 +7,7 @@ from src.modules.ecg_module import ECGProcessor
 from src.modules.sync_module import SyncModule
 from src.modules.edf_converter import EDFExporter
 from src.gui.widgets import MultiChannelPlotWidget
+from src.gui.metadata_dialog import MetadataDialog
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -50,13 +51,13 @@ class MainWindow(QMainWindow):
         self.btn_extract_ecg.clicked.connect(self.extract_ecg)
         file_layout.addWidget(self.btn_extract_ecg)
 
-        self.btn_load_hpf = QPushButton("3. Cargar Metadatos (.hpf)")
-        self.btn_load_hpf.clicked.connect(self.load_hpf)
-        file_layout.addWidget(self.btn_load_hpf)
-
-        self.btn_load_emg = QPushButton("4. Cargar Señal EMG (.csv)")
+        self.btn_load_emg = QPushButton("3. Cargar Señal EMG (.csv)")
         self.btn_load_emg.clicked.connect(self.load_emg)
         file_layout.addWidget(self.btn_load_emg)
+
+        self.btn_inspect = QPushButton("4. Mostrar Metadatos")
+        self.btn_inspect.clicked.connect(self.show_metadata_inspector)
+        file_layout.addWidget(self.btn_inspect)
 
         self.btn_export = QPushButton("5. Exportar EDF Unificado")
         self.btn_export.clicked.connect(self.export_edf)
@@ -72,7 +73,7 @@ class MainWindow(QMainWindow):
         sync_group = QGroupBox("Controles de Sincronización Temporal")
         sync_layout = QHBoxLayout()
 
-        self.btn_auto_sync = QPushButton("Sincronización Automática")
+        self.btn_auto_sync = QPushButton(" Sincronización Automática ")
         self.btn_auto_sync.clicked.connect(self.sync_auto)
         sync_layout.addWidget(self.btn_auto_sync)
 
@@ -175,20 +176,6 @@ class MainWindow(QMainWindow):
             self, "ECG Aislado", 
             f"Se ha extraído el canal principal de ECG ('{found_label}').\n\n"
         )
-
-    def load_hpf(self):
-        """Carga de metadatos (.hpf)."""
-        path, _ = QFileDialog.getOpenFileName(self, "Seleccionar Metadatos HPF", "data/raw", "Archivos HPF (*.hpf)")
-        if path:
-            self.emg_processor.parse_hpf_metadata(path)
-            n_ch = len(self.emg_processor.channel_names)
-            st = self.emg_processor.start_time or "No especificada"
-            
-            self.lbl_status.setText(f"Metadatos HPF leídos ({n_ch} nombres musculares cargados). Cargar ahora el .csv.")
-            QMessageBox.information(
-                self, "Metadatos Cargados", 
-                f"Metadatos leídos correctamente:\n- Nombres de canales: {n_ch}\n- Hora de inicio: {st}\n\nSeleccione ahora el archivo .csv para cargar las señales."
-            )
 
     def load_emg(self):
         """Carga la matriz de datos (.csv), estandarizando magnitudes a uV."""
@@ -315,3 +302,43 @@ class MainWindow(QMainWindow):
             self, "Éxito", 
             f"Archivo exportado correctamente ({total_records} s / {len(signals_to_export)} canales)."
         )
+
+    def show_metadata_inspector(self):
+        """Abre la ventana modal con la auditoría de metadatos de los canales actuales."""
+        if not self.ecg_signals_all and self.emg_signals is None:
+            QMessageBox.warning(self, "Aviso", "Carga al menos un archivo antes de inspeccionar metadatos.")
+            return
+
+        # Recopilar cabeceras actuales
+        all_headers = []
+
+        # Cabeceras ECG
+        for i, h in enumerate(self.ecg_headers_all):
+            all_headers.append({
+                'label': h.get('label', f'ECG_{i+1}'),
+                'sample_rate': self.ecg_fs,
+                'dimension': h.get('dimension', 'mV')
+            })
+
+        # Cabeceras EMG
+        if self.emg_signals is not None and self.emg_signals.size > 0:
+            ch_names = getattr(self.emg_processor, 'channel_names', [])
+            for i in range(self.emg_signals.shape[0]):
+                name = ch_names[i] if i < len(ch_names) else f"EMG_{i+1}"
+                all_headers.append({
+                    'label': name,
+                    'sample_rate': getattr(self, 'emg_fs', 1000.0),
+                    'dimension': 'uV'
+                })
+
+        # Calcular duración total en segundos
+        dur_sec = len(self.ecg_signals_all[0]) / float(self.ecg_fs) if self.ecg_signals_all else 0.0
+
+        # Mostrar diálogo modal
+        dialog = MetadataDialog(
+            parent=self,
+            headers=all_headers,
+            annotations=getattr(self, 'annotations', []),
+            duration_sec=dur_sec
+        )
+        dialog.exec_()
