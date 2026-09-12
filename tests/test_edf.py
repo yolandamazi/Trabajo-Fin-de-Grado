@@ -49,6 +49,24 @@ class TestEDFExporter(unittest.TestCase):
         finally:
             # Garantiza el cierre del descriptor en Windows aunque falle un assert
             f.close()
+            
+    def test_export_missing_dimension_raises_error(self):
+      """Verifica que el exportador falle de forma estricta si algún canal carece de dimensión."""
+      out_path = os.path.join(self.temp_dir.name, "fail_dim.edf")
+      signals = [np.full(100, 1.0)]
+      headers = [{"label": "CH1", "sample_rate": 256, "dimension": ""}]
+
+      with self.assertRaises(ValueError):
+        EDFExporter.export_unified_edf(out_path, signals, headers)
+
+    def test_export_missing_fs_raises_error(self):
+      """Verifica que el exportador falle si la frecuencia de muestreo es nula o inválida."""
+      out_path = os.path.join(self.temp_dir.name, "fail_fs.edf")
+      signals = [np.full(100, 1.0)]
+      headers = [{"label": "CH1", "sample_rate": 0, "dimension": "mV"}]
+
+      with self.assertRaises(ValueError):
+        EDFExporter.export_unified_edf(out_path, signals, headers)
 
 
 if __name__ == '__main__':

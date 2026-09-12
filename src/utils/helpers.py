@@ -9,3 +9,4 @@ def ensure_directories_exist(base_path: str = ".") -> None:
     ]
     for d in dirs:
         os.makedirs(d, exist_ok=True)
+

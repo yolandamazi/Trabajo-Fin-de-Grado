@@ -10,3 +10,6 @@ data/output/*
 !data/output/.gitkeep
 .vscode/
 .idea/
+docs/
+.docs/
+textput.log
