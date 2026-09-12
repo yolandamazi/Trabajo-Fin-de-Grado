@@ -8,6 +8,7 @@ from src.gui.widgets import MultiChannelPlotWidget
 from src.modules.ecg_module import ECGProcessor
 from src.modules.edf_converter import EDFExporter
 from src.modules.emg_module import EMGProcessor
+from src.modules.sync_module import SyncModule
 
 LOCAL_TIMEZONE = ZoneInfo('Europe/Madrid')
 
@@ -509,52 +510,42 @@ class MainWindow(QMainWindow):
         self.refresh_gui_plots()
 
   def sync_auto(self):
-      """Alinea las señales con la Anotación '1'."""
-      if not self.ecg_signals_all or getattr(self, 'emg_signals_raw', None) is None:
+      """Alinea las señales automaticamente."""
+      if (
+          not getattr(self, 'ecg_signals_all', None)
+          or getattr(self, 'emg_signals_raw', None) is None
+      ):
         QMessageBox.warning(
-            self, 'Aviso', 'Debes cargar ECG y EMG previamente.'
+            self,
+            'Aviso',
+            'Debes cargar ECG y EMG previamente.',
+            QMessageBox.Ok,
         )
         return
 
-      t1_onset = 0.0
-      for ann in self.annotations:
-        label = str(
-            ann.get('label', '')
-            if isinstance(ann, dict)
-            else (ann[2] if len(ann) > 2 else '')
-        ).strip()
-        if label == '1':
-          t1_onset = float(
-              ann.get('onset', 0.0) if isinstance(ann, dict) else ann[0]
-          )
-          break
+      try:
+        raw_emg = self.emg_signals_raw
+        emg_fs = float(self.emg_fs)
+        ecg_ref = self.ecg_signals_all[0]
+        ecg_fs = float(self.ecg_headers_all[0]['sample_rate'])
 
-      raw_emg = self.emg_signals_raw
-      emg_fs = float(self.emg_fs)
+        self.emg_signals = SyncModule.align_emg_to_annotation_one(
+            raw_emg, emg_fs, self.annotations, ecg_ref, ecg_fs
+        )
+        self.emg_start_time = self.ecg_start_time
 
-      ecg_dur_sec = len(self.ecg_signals_all[0]) / float(self.ecg_fs)
-      target_samples = int(np.ceil(ecg_dur_sec)) * int(np.round(emg_fs))
+        self.refresh_gui_plots()
+        self.lbl_status.setText(
+            'EMGs Sincronizados | Anclados a Anotación "1"'
+        )
 
-      pad_start = int(np.round(t1_onset * emg_fs))
-      padded_signals = []
-
-      for sig in raw_emg:
-        pad_end = max(0, target_samples - (pad_start + len(sig)))
-        padded = np.pad(
-            sig, (pad_start, pad_end), mode='constant', constant_values=0.0
-        )[:target_samples]
-        padded_signals.append(padded)
-
-      self.emg_signals = np.array(padded_signals)
-      self.emg_start_time = self.ecg_start_time
-
-      self.refresh_gui_plots()
-
-      mins = int(self.emg_duration_sec // 60)
-      secs = self.emg_duration_sec % 60
-      self.lbl_status.setText(
-          f'EMGs Sincronizados | Anclados a Anotación "1"'
-      )
+      except Exception as e:
+        QMessageBox.critical(
+            self,
+            'Error de Sincronización',
+            f'No se pudo completar la sincronización automática:\n{str(e)}',
+            QMessageBox.Ok,
+        )
 
   def export_edf(self):
       """Exporta a EDF/EDF+ unificado."""
