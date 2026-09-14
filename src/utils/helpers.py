@@ -1,12 +1,12 @@
-import os
-from datetime import datetime
+from pathlib import Path
 
-def ensure_directories_exist(base_path: str = ".") -> None:
-    """Asegura la presencia de carpetas data/raw y data/output."""
-    dirs = [
-        os.path.join(base_path, "data", "raw"),
-        os.path.join(base_path, "data", "output")
+def ensure_directories_exist():
+    """Crea los directorios esenciales del proyecto si no existen."""
+    directories = [
+        Path("data/raw"),
+        Path("data/output")
     ]
-    for d in dirs:
-        os.makedirs(d, exist_ok=True)
+    
+    for directory in directories:
+        directory.mkdir(parents=True, exist_ok=True)
 

@@ -18,11 +18,6 @@ TFG_Proyecto/
 │   │   └── sync_module.py     
 │   ├── utils/                 # Funciones de soporte y auxiliares
 │   │   └── helpers.py         
-│   └── main.py                # Punto de entrada de la aplicación
-├── tests/                     # Pruebas unitarias 
-│   ├── test_ecg.py            
-│   ├── test_edf.py            
-│   ├── test_emg.py            
-│   └── test_sync.py           
+│   └── main.py                # Punto de entrada de la aplicación           
 ├── requirements.txt           # Listado de dependencias y librerías de Python
 └── README.md                  

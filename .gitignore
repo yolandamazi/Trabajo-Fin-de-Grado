@@ -12,4 +12,6 @@ data/output/*
 .idea/
 docs/
 .docs/
+tests/
+.tests/
 texput.log

@@ -232,32 +232,41 @@ class MainWindow(QMainWindow):
         )
 
   def extract_ecg(self):
-    """Aísla exclusivamente el canal ECG."""
-    if not self.ecg_signals_all:
-      QMessageBox.warning(
-          self, 'Aviso', 'Carga primero un archivo EDF/EDF+.'
+      """Aísla exclusivamente el canal ECG aplicando validación estricta."""
+      if not self.ecg_signals_all:
+        QMessageBox.warning(
+            self, 'Aviso', 'Carga primero un archivo EDF/EDF+.'
+        )
+        return
+
+      ecg_idx = None
+      found_label = ''
+      for i, h in enumerate(self.ecg_headers_all):
+        lbl = str(h.get('label', ''))
+        if 'ecg' in lbl.lower():
+          ecg_idx = i
+          found_label = lbl
+          break
+
+      if ecg_idx is None:
+        QMessageBox.warning(
+            self,
+            'Error de Extracción',
+            (
+                'No se ha podido identificar ningún canal con la etiqueta'
+                " 'ECG' en las cabeceras del archivo."
+            ),
+            QMessageBox.Ok,
+        )
+        return
+
+      self.ecg_signals_all = [self.ecg_signals_all[ecg_idx]]
+      self.ecg_headers_all = [self.ecg_headers_all[ecg_idx]]
+
+      self.refresh_gui_plots()
+      self.lbl_status.setText(
+          f"Canal ECG aislado correctamente: '{found_label}'."
       )
-      return
-
-    ecg_idx = 0
-    found_label = ''
-    for i, h in enumerate(self.ecg_headers_all):
-      lbl = str(h.get('label', ''))
-      if 'ecg' in lbl.lower():
-        ecg_idx = i
-        found_label = lbl
-        break
-
-    if not found_label and len(self.ecg_headers_all) > 0:
-      found_label = str(self.ecg_headers_all[0].get('label', 'Canal_1'))
-
-    self.ecg_signals_all = [self.ecg_signals_all[ecg_idx]]
-    self.ecg_headers_all = [self.ecg_headers_all[ecg_idx]]
-
-    self.refresh_gui_plots()
-    self.lbl_status.setText(
-        f"Canal ECG aislado correctamente: '{found_label}'."
-    )
 
   def load_csv(self):
       """Carga el CSV exigiendo que exista un archivo EDF (ECG) cargado previamente."""
@@ -672,114 +681,169 @@ class MainWindow(QMainWindow):
       )
 
   def show_metadata_inspector(self):
-      """Muestra la ventana de metadatos mostrando los datos por canal."""
-      if not self.ecg_signals_all and self.emg_signals is None:
+    """Muestra la ventana de metadatos de los canales cargados."""
+    ecg_signals = getattr(self, 'ecg_signals_all', None)
+    emg_signals = getattr(self, 'emg_signals', None)
+
+    has_ecg = ecg_signals is not None and len(ecg_signals) > 0
+
+    has_emg = (
+        emg_signals is not None
+        and hasattr(emg_signals, 'size')
+        and emg_signals.size > 0
+    )
+
+    if not has_ecg and not has_emg:
         QMessageBox.warning(
             self,
             'Aviso',
-            'Carga al menos un archivo.',
+            'Carga al menos un canal.',
         )
         return
 
-      all_headers = []
+    all_headers = []
+    if has_ecg:
+        ecg_headers = getattr(self, 'ecg_headers_all', [])
+        for i, h in enumerate(ecg_headers):
+            lbl = h.get('label', f'ECG_{i+1}')
+            fs_val = h.get('sample_rate') or h.get('sample_frequency')
+            if fs_val is None or float(fs_val) <= 0:
+                QMessageBox.critical(
+                    self,
+                    'Error de Metadatos',
+                    f'El canal ECG {i+1} ("{lbl}") '
+                    'no especifica una frecuencia de muestreo válida.',
+                )
+                return
 
-      for i, h in enumerate(self.ecg_headers_all):
-        lbl = h.get('label', f'ECG_{i+1}')
+            fs_val = float(fs_val)
+            unit = h.get('dimension') or h.get('units')
+            if not unit:
+                QMessageBox.critical(
+                    self,
+                    'Error de Metadatos',
+                    f'El canal ECG {i+1} ("{lbl}") '
+                    'no especifica ninguna dimensión o unidad.',
+                )
+                return
 
-        fs_val = h.get('sample_rate') or h.get('sample_frequency')
-        if fs_val is None or float(fs_val) <= 0:
-          QMessageBox.critical(
-              self,
-              'Error de Metadatos',
-              f'El canal ECG {i+1} ("{lbl}") no especifica una frecuencia de muestreo válida.',
-          )
-          return
-        fs_val = float(fs_val)
+            sig = (
+                ecg_signals[i]
+                if i < len(ecg_signals)
+                else []
+            )
 
-        unit = h.get('dimension') or h.get('units')
-        if not unit:
-          QMessageBox.critical(
-              self,
-              'Error de Metadatos',
-              f'El canal ECG {i+1} ("{lbl}") no especifica ninguna dimensión o unidad.',
-          )
-          return
+            n_samples = len(sig)
+            dur_ch = n_samples / fs_val
+            all_headers.append({
+                'label': str(lbl),
+                'sample_rate': fs_val,
+                'dimension': str(unit).strip(),
+                'duration_sec': dur_ch,
+                'samples': n_samples,
+            })
 
-        sig = (
-            self.ecg_signals_all[i]
-            if i < len(self.ecg_signals_all)
-            else []
-        )
-        n_samples = len(sig)
-        dur_ch = n_samples / fs_val if fs_val > 0 else 0.0
+    raw_emg = getattr(self, 'emg_signals_raw', None)
+    emg_source = (
+        raw_emg
+        if raw_emg is not None
+        else emg_signals
+    )
 
-        all_headers.append({
-            'label': str(lbl),
-            'sample_rate': fs_val,
-            'dimension': str(unit).strip(),
-            'duration_sec': dur_ch,
-            'samples': n_samples,
-        })
+    has_emg_source = (
+        emg_source is not None
+        and hasattr(emg_source, 'size')
+        and emg_source.size > 0
+    )
 
-      raw_emg = getattr(self, 'emg_signals_raw', None)
-      emg_source = raw_emg if raw_emg is not None else self.emg_signals
-
-      if emg_source is not None and emg_source.size > 0:
+    if has_emg_source:
         n_samples_raw = emg_source.shape[1]
-
+        emg_headers = getattr(self, 'emg_headers', [])
         for i in range(emg_source.shape[0]):
-          hdr_i = (
-              self.emg_headers[i]
-              if hasattr(self, 'emg_headers') and i < len(self.emg_headers)
-              else {}
-          )
-          name = hdr_i.get('label', f'EMG_{i+1}')
 
-          fs_val = hdr_i.get('sample_rate') or getattr(self, 'emg_fs', None)
-          if fs_val is None or float(fs_val) <= 0:
-            QMessageBox.critical(
-                self,
-                'Error de Metadatos',
-                f'El canal EMG {i+1} ("{name}") no especifica una frecuencia de muestreo válida.',
+            hdr_i = (
+                emg_headers[i]
+                if i < len(emg_headers)
+                else {}
             )
-            return
-          fs_val = float(fs_val)
 
-          unit = hdr_i.get('dimension') or hdr_i.get('units')
-          if not unit:
-            QMessageBox.critical(
-                self,
-                'Error de Metadatos',
-                f'El canal EMG {i+1} ("{name}") no especifica ninguna dimensión o unidad.',
+            name = hdr_i.get(
+                'label',
+                f'EMG_{i+1}'
             )
-            return
 
-          dur_emg_raw = n_samples_raw / fs_val if fs_val > 0 else 0.0
+            fs_val = (
+                hdr_i.get('sample_rate')
+                or getattr(self, 'emg_fs', None)
+            )
 
-          all_headers.append({
-              'label': str(name),
-              'sample_rate': fs_val,
-              'dimension': str(unit).strip(),
-              'duration_sec': dur_emg_raw,
-              'samples': n_samples_raw,
-          })
+            if fs_val is None or float(fs_val) <= 0:
+                QMessageBox.critical(
+                    self,
+                    'Error de Metadatos',
+                    f'El canal EMG {i+1} ("{name}") '
+                    'no especifica una frecuencia de muestreo válida.',
+                )
+                return
 
-      dur_master_sec = (
-          len(self.ecg_signals_all[0]) / float(self.ecg_fs)
-          if self.ecg_signals_all and hasattr(self, 'ecg_fs')
-          else 0.0
-      )
-      ecg_start_epoch = (
-          self.get_ecg_start_epoch()
-          if hasattr(self, 'get_ecg_start_epoch')
-          else 0.0
-      )
+            fs_val = float(fs_val)
+            unit = (
+                hdr_i.get('dimension')
+                or hdr_i.get('units')
+            )
 
-      dialog = MetadataDialog(
-          parent=self,
-          headers=all_headers,
-          annotations=getattr(self, 'annotations', []),
-          duration_sec=dur_master_sec,
-          start_time_epoch=ecg_start_epoch,
-      )
-      dialog.exec_()
+            if not unit:
+                QMessageBox.critical(
+                    self,
+                    'Error de Metadatos',
+                    f'El canal EMG {i+1} ("{name}") '
+                    'no especifica ninguna dimensión o unidad.',
+                )
+                return
+
+            dur_emg_raw = n_samples_raw / fs_val
+            all_headers.append({
+                'label': str(name),
+                'sample_rate': fs_val,
+                'dimension': str(unit).strip(),
+                'duration_sec': dur_emg_raw,
+                'samples': n_samples_raw,
+            })
+
+    dur_master_sec = 0.0
+    start_time_epoch = 0.0
+
+    if has_ecg:
+        ecg_fs = getattr(self, 'ecg_fs', None)
+
+        if ecg_fs is not None and float(ecg_fs) > 0:
+            dur_master_sec = (
+                len(ecg_signals[0]) / float(ecg_fs)
+            )
+
+        if hasattr(self, 'get_ecg_start_epoch'):
+            start_time_epoch = self.get_ecg_start_epoch()
+
+    elif has_emg_source:
+        emg_fs = getattr(self, 'emg_fs', None)
+
+        if emg_fs is not None and float(emg_fs) > 0:
+            dur_master_sec = (
+                emg_source.shape[1] / float(emg_fs)
+            )
+
+        start_time_epoch = getattr(
+            self,
+            'emg_start_epoch',
+            0.0
+        )
+
+    dialog = MetadataDialog(
+        parent=self,
+        headers=all_headers,
+        annotations=getattr(self, 'annotations', []),
+        duration_sec=dur_master_sec,
+        start_time_epoch=start_time_epoch,
+    )
+
+    dialog.exec_()
