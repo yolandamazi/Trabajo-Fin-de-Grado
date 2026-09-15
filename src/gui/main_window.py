@@ -480,6 +480,7 @@ class MainWindow(QMainWindow):
             QMessageBox.Ok,
         )
         self.lbl_status.setText('EMG Alineados.')
+        self.hpf_loaded = True
       else:
         QMessageBox.warning(
             self,
@@ -519,42 +520,90 @@ class MainWindow(QMainWindow):
         self.refresh_gui_plots()
 
   def sync_auto(self):
-      """Alinea las señales automaticamente."""
-      if (
-          not getattr(self, 'ecg_signals_all', None)
-          or getattr(self, 'emg_signals_raw', None) is None
-      ):
-        QMessageBox.warning(
-            self,
-            'Aviso',
-            'Debes cargar ECG y EMG previamente.',
-            QMessageBox.Ok,
-        )
-        return
+        """Alinea las señales automaticamente tras verificar ECG, EMG y metadatos HPF."""
+        if (
+            not getattr(self, 'ecg_signals_all', None)
+            or getattr(self, 'emg_signals_raw', None) is None
+        ):
+            QMessageBox.warning(
+                self,
+                'Aviso',
+                'Debes cargar ECG y EMG previamente.',
+                QMessageBox.Ok,
+            )
+            return
 
-      try:
-        raw_emg = self.emg_signals_raw
-        emg_fs = float(self.emg_fs)
-        ecg_ref = self.ecg_signals_all[0]
-        ecg_fs = float(self.ecg_headers_all[0]['sample_rate'])
+        # Comprobación de seguridad: verificar que se han importado los metadatos HPF
+        if not getattr(self, 'hpf_loaded', False):
+            QMessageBox.warning(
+                self,
+                'Aviso',
+                'Debes importar los metadatos (.hpf) antes de realizar la sincronización automática.',
+                QMessageBox.Ok,
+            )
+            return
 
-        self.emg_signals = SyncModule.align_emg_to_annotation_one(
-            raw_emg, emg_fs, self.annotations, ecg_ref, ecg_fs
-        )
-        self.emg_start_time = self.ecg_start_time
+        annotation_one_found = False
+        ann_time = 0.0
+        if self.annotations:
+            for ann in self.annotations:
+                label = str(
+                    ann.get('label', '')
+                    if isinstance(ann, dict)
+                    else (ann[2] if len(ann) > 2 else '')
+                ).strip()
+                if label == '1':
+                    annotation_one_found = True
+                    ann_time = float(ann.get('time', 0.0) if isinstance(ann, dict) else ann[0])
+                    break
 
-        self.refresh_gui_plots()
-        self.lbl_status.setText(
-            'EMGs Sincronizados | Anclados a Anotación "1"'
-        )
+        if not annotation_one_found:
+            QMessageBox.warning(
+                self,
+                'Aviso',
+                'No se ha encontrado ninguna anotación con la etiqueta "1" en el registro de ECG '
+                'para utilizar como referencia de inicio.',
+                QMessageBox.Ok,
+            )
+            return
 
-      except Exception as e:
-        QMessageBox.critical(
-            self,
-            'Error de Sincronización',
-            f'No se pudo completar la sincronización automática:\n{str(e)}',
-            QMessageBox.Ok,
-        )
+        try:
+            raw_emg = self.emg_signals_raw
+            emg_fs = float(self.emg_fs)
+            ecg_ref = self.ecg_signals_all[0]
+            ecg_fs = float(self.ecg_headers_all[0]['sample_rate'])
+
+            result = SyncModule.align_emg_to_annotation_one(
+                raw_emg, emg_fs, self.annotations, ecg_ref, ecg_fs
+            )
+            
+            if isinstance(result, tuple):
+                self.emg_signals, offset_sec = result
+            else:
+                self.emg_signals = result
+                offset_sec = ann_time
+
+            self.emg_start_time = self.ecg_start_time
+
+            self.refresh_gui_plots()
+            self.lbl_status.setText(
+                f'Señales de EMG sincronizadas | Anclados a Anotación "1" (Desfase: {offset_sec:.2f} s)'
+            )
+
+            QMessageBox.information(
+                self,
+                'Sincronización Automática',
+                f'Señales EMG sincronizadas y ancladas a anotación "1" correctamente (Desfase: {offset_sec:.2f} s)',
+                QMessageBox.Ok,
+            )
+
+        except Exception as e:
+            QMessageBox.critical(
+                self,
+                'Error de Sincronización',
+                f'No se pudo completar la sincronización automática:\n{str(e)}',
+                QMessageBox.Ok,
+            )
 
   def export_edf(self):
       """Exporta a EDF/EDF+ unificado."""
