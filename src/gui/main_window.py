@@ -585,15 +585,28 @@ class MainWindow(QMainWindow):
 
             self.emg_start_time = self.ecg_start_time
 
+            raw_len = len(raw_emg[0]) if hasattr(raw_emg[0], '__len__') else len(raw_emg)
+            aligned_len = len(self.emg_signals[0]) if hasattr(self.emg_signals[0], '__len__') else len(self.emg_signals)
+            sample_diff = aligned_len - raw_len
+
+            if sample_diff > 0:
+                mod_status = f"Relleno aplicado (+{sample_diff} muestras)"
+            elif sample_diff < 0:
+                mod_status = f"Señal truncada ({sample_diff} muestras)"
+            else:
+                mod_status = "Sin cambios de longitud"
+
             self.refresh_gui_plots()
-            self.lbl_status.setText(
-                f'Señales de EMG sincronizadas | Anclados a Anotación "1" (Desfase: {offset_sec:.2f} s)'
-            )
+            
+            status_message = f'Señales de EMG sincronizadas | Anclados a Anotación "1" (Desfase: {offset_sec:.2f} s) | {mod_status}'
+            self.lbl_status.setText(status_message)
 
             QMessageBox.information(
                 self,
                 'Sincronización Automática',
-                f'Señales EMG sincronizadas y ancladas a anotación "1" correctamente (Desfase: {offset_sec:.2f} s)',
+                f'Señales EMG sincronizadas y ancladas a anotación "1" correctamente.\n\n'
+                f'• Desfase calculado: {offset_sec:.2f} s\n'
+                f'• Estado de la señal: {mod_status}',
                 QMessageBox.Ok,
             )
 
